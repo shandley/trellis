@@ -179,6 +179,25 @@ func (f *fakeStore) CreateNode(_ context.Context, channelID string, parentID *st
 	return &n, nil
 }
 
+func (f *fakeStore) ResolveNodeID(_ context.Context, prefix string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var matches []string
+	for i := range f.nodes {
+		if strings.HasPrefix(f.nodes[i].ID, prefix) {
+			matches = append(matches, f.nodes[i].ID)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", errNotFound
+	case 1:
+		return matches[0], nil
+	default:
+		return "", core.ErrAmbiguousID
+	}
+}
+
 func (f *fakeStore) NodeByID(_ context.Context, id string) (*core.Node, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shandley/trellis/internal/core"
@@ -341,6 +342,50 @@ func (s *sqliteStore) NodeByID(ctx context.Context, id string) (*core.Node, erro
 		return nil, fmt.Errorf("node by id %q: %w", id, ErrNotFound)
 	}
 	return n, err
+}
+
+// ResolveNodeID expands a node-id prefix to a full id, git-style. It returns
+// ErrNotFound when no node matches and core.ErrAmbiguousID when more than one
+// does. A full id resolves to itself.
+func (s *sqliteStore) ResolveNodeID(ctx context.Context, prefix string) (string, error) {
+	if prefix == "" {
+		return "", fmt.Errorf("resolve node id: empty prefix: %w", ErrNotFound)
+	}
+	// LIKE with an escaped prefix; ids are hex so no wildcard chars occur, but
+	// guard anyway. Limit 2 is enough to detect ambiguity.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM nodes WHERE id LIKE ? ESCAPE '\' LIMIT 2`, likePrefix(prefix))
+	if err != nil {
+		return "", fmt.Errorf("resolve node id: %w", err)
+	}
+	defer rows.Close()
+
+	var matches []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		matches = append(matches, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("resolve node id %q: %w", prefix, ErrNotFound)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("resolve node id %q: %w", prefix, core.ErrAmbiguousID)
+	}
+}
+
+// likePrefix turns a literal prefix into a LIKE pattern, escaping the LIKE
+// metacharacters %, _ and the escape char itself.
+func likePrefix(p string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(p) + "%"
 }
 
 func (s *sqliteStore) Subtree(ctx context.Context, rootID string) ([]core.Node, error) {

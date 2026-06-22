@@ -284,15 +284,43 @@ func readCmd() *cobra.Command {
 		asJSON bool
 	)
 	cmd := &cobra.Command{
-		Use:   "read <post-id>",
+		Use:   "read <post-id|channel>",
 		Short: "Read a post and its subtree (folded by default; --all expands)",
-		Args:  cobra.ExactArgs(1),
+		Long: "Read a post and its replies. The argument is either a post id (a short\n" +
+			"prefix from `feed` is fine) or a channel name, in which case the channel's\n" +
+			"most recently active post is shown.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return fmt.Errorf("specify a post id or a channel name (e.g. `trellis read general`); run `trellis feed <channel>` to list posts")
+			}
 			c, err := newClient()
 			if err != nil {
 				return err
 			}
-			pv, err := c.GetPost(cmd.Context(), args[0])
+			target := args[0]
+
+			// If the argument names a channel, read that channel's most-active post.
+			postID := target
+			if chs, err := c.ListChannels(cmd.Context()); err == nil {
+				for _, ch := range chs {
+					if ch.Name == target {
+						posts, ferr := c.Feed(cmd.Context(), target, 1, false, false)
+						if ferr != nil {
+							return ferr
+						}
+						if len(posts) == 0 {
+							fmt.Fprintf(cmd.OutOrStdout(), "no posts in #%s\n", target)
+							return nil
+						}
+						postID = posts[0].ID
+						fmt.Fprintf(cmd.ErrOrStderr(), "most recent post in #%s:\n", target)
+						break
+					}
+				}
+			}
+
+			pv, err := c.GetPost(cmd.Context(), postID)
 			if err != nil {
 				return err
 			}

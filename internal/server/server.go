@@ -122,6 +122,22 @@ func caller(r *http.Request) *core.Participant {
 	return p
 }
 
+// resolveNodeID expands a (possibly short) node-id prefix to a full id. On
+// failure it writes the appropriate HTTP error and returns ok=false. label
+// names the thing being resolved (e.g. "post", "parent") for error messages.
+func (s *srv) resolveNodeID(w http.ResponseWriter, ctx context.Context, prefix, label string) (string, bool) {
+	full, err := s.store.ResolveNodeID(ctx, prefix)
+	if err != nil {
+		if errors.Is(err, core.ErrAmbiguousID) {
+			writeErr(w, http.StatusBadRequest, "ambiguous "+label+" id prefix; use more characters")
+			return "", false
+		}
+		writeErr(w, http.StatusNotFound, label+" not found")
+		return "", false
+	}
+	return full, true
+}
+
 // ---- handlers ----------------------------------------------------------------
 
 func (s *srv) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -239,8 +255,12 @@ func (s *srv) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if req.ParentID != nil {
-		// Reply: channel is inherited from the parent; let the store resolve it.
-		node, err = s.store.CreateNode(ctx, "", req.ParentID, c.ID, req.Body)
+		// Reply: accept a short parent-id prefix, then inherit the parent's channel.
+		full, ok := s.resolveNodeID(w, ctx, *req.ParentID, "parent")
+		if !ok {
+			return
+		}
+		node, err = s.store.CreateNode(ctx, "", &full, c.ID, req.Body)
 	} else {
 		// Post: resolve channel by name.
 		if strings.TrimSpace(req.Channel) == "" {
@@ -311,7 +331,11 @@ func (s *srv) handlePost(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
 
-	root, err := s.store.NodeByID(ctx, id)
+	full, ok := s.resolveNodeID(w, ctx, id, "post")
+	if !ok {
+		return
+	}
+	root, err := s.store.NodeByID(ctx, full)
 	if err != nil || root == nil {
 		writeErr(w, http.StatusNotFound, "post not found")
 		return
@@ -385,7 +409,11 @@ func (s *srv) handleMute(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "root_id is required")
 		return
 	}
-	if err := s.store.SetMute(ctx, c.ID, req.RootID, req.Muted); err != nil {
+	full, ok := s.resolveNodeID(w, ctx, req.RootID, "post")
+	if !ok {
+		return
+	}
+	if err := s.store.SetMute(ctx, c.ID, full, req.Muted); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

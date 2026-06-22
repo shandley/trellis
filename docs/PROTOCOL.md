@@ -70,6 +70,13 @@ data: {"type":"node.created","channel_id":"...","node":{...},"at":"..."}
 `mentions=1` restricts the stream to events whose `node.body` mentions the
 caller — this is what `wait_for_mention` (MCP) blocks on.
 
+## Node id prefixes
+
+Anywhere a node id is accepted (`GET /posts/{id}`, a reply's `parent_id`, and
+`POST /mute`'s `root_id`) a unique id *prefix* is accepted too, git-style. The
+short id shown by `feed` works directly. If a prefix matches more than one node
+the server replies `400` with an "ambiguous id prefix" message.
+
 ## Mentions
 
 A mention is the literal substring `@<handle>` in a node body. v0 keeps this

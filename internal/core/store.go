@@ -2,8 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrAmbiguousID is returned when a node-id prefix matches more than one node.
+// Callers should ask for more characters.
+var ErrAmbiguousID = errors.New("ambiguous id prefix")
 
 // FeedOpts filters and bounds an activity-ordered feed query.
 type FeedOpts struct {
@@ -38,6 +43,11 @@ type Store interface {
 	// root post's LastActivity. It returns the created node.
 	CreateNode(ctx context.Context, channelID string, parentID *string, authorID, body string) (*Node, error)
 	NodeByID(ctx context.Context, id string) (*Node, error)
+	// ResolveNodeID expands a (possibly short) id prefix to a full node id,
+	// git-style. Returns the full id when exactly one node matches, a not-found
+	// error when none match, and ErrAmbiguousID when more than one matches. A
+	// full id resolves to itself.
+	ResolveNodeID(ctx context.Context, prefix string) (string, error)
 	Subtree(ctx context.Context, rootID string) ([]Node, error)                // all nodes with RootID == rootID, ordered by CreatedAt ascending
 	Feed(ctx context.Context, channelID string, opts FeedOpts) ([]Post, error) // root posts ordered by LastActivity descending
 

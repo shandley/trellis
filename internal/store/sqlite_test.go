@@ -362,3 +362,37 @@ func assertFeedOrder(t *testing.T, feed []core.Post, ids ...string) {
 		}
 	}
 }
+
+func TestResolveNodeID(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	p, err := st.CreateParticipant(ctx, "scott", "scott", core.KindHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.CreateChannel(ctx, "general", core.ChannelOpen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := st.CreateNode(ctx, ch.ID, nil, p.ID, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Full id resolves to itself.
+	if got, err := st.ResolveNodeID(ctx, n.ID); err != nil || got != n.ID {
+		t.Fatalf("full id: got %q err %v", got, err)
+	}
+	// A short prefix (as shown by `feed`) resolves to the full id.
+	if got, err := st.ResolveNodeID(ctx, n.ID[:8]); err != nil || got != n.ID {
+		t.Fatalf("prefix: got %q err %v", got, err)
+	}
+	// Unknown prefix -> ErrNotFound.
+	if _, err := st.ResolveNodeID(ctx, "ffffffffffffffffffffffffffffffff0"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown prefix: want ErrNotFound, got %v", err)
+	}
+	// Empty prefix -> ErrNotFound (never match-all).
+	if _, err := st.ResolveNodeID(ctx, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty prefix: want ErrNotFound, got %v", err)
+	}
+}
