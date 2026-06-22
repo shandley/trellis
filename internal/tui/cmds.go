@@ -24,6 +24,7 @@ type feedLoadedMsg struct {
 type threadLoadedMsg struct{ view api.PostView }
 type postedMsg struct{}
 type channelCreatedMsg struct{ name string }
+type mutedMsg struct{ muted bool }
 type errMsg struct{ err error }
 
 // sseStartedMsg carries the live event channel once the SSE stream opens.
@@ -98,6 +99,17 @@ func submitPost(ctx context.Context, c *client.Client, t composeTarget, body str
 			return errMsg{err}
 		}
 		return postedMsg{}
+	}
+}
+
+// toggleMute mutes or unmutes a post (by root id) for the caller, then signals
+// mutedMsg so the model can reload.
+func toggleMute(ctx context.Context, c *client.Client, rootID string, muted bool) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.Mute(ctxOrBackground(ctx), rootID, muted); err != nil {
+			return errMsg{err}
+		}
+		return mutedMsg{muted: muted}
 	}
 }
 

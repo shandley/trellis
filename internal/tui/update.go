@@ -86,6 +86,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "created #" + msg.name
 		return m, tea.Batch(loadChannels(m.ctx, m.c), loadFeed(m.ctx, m.c, msg.name))
 
+	case mutedMsg:
+		if msg.muted {
+			m.status = "muted"
+		} else {
+			m.status = "unmuted"
+		}
+		// Reload so the post sinks/rises and the marker updates.
+		cmds := []tea.Cmd{loadFeed(m.ctx, m.c, m.channel)}
+		if m.threadID != "" {
+			cmds = append(cmds, loadThread(m.ctx, m.c, m.threadID))
+		}
+		return m, tea.Batch(cmds...)
+
 	case errMsg:
 		m.status = msg.err.Error()
 		return m, nil
@@ -163,6 +176,12 @@ func (m model) keyFeed(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Create a new channel (the compose text is the channel name).
 		m.startCompose(composeTarget{createChannel: true}, modeFeed)
 		return m, m.compose.Focus()
+	case "m":
+		// Toggle mute on the selected post.
+		if it, ok := m.feed.SelectedItem().(feedItem); ok {
+			return m, toggleMute(m.ctx, m.c, it.post.RootID, !it.post.Muted)
+		}
+		return m, nil
 	case "tab":
 		m.nextChannel()
 		m.status = "loading #" + m.channel + "…"
@@ -182,6 +201,9 @@ func (m model) keyThread(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeFeed
 		m.threadID = ""
 		return m, nil
+	case "m":
+		// Toggle mute on the open post.
+		return m, toggleMute(m.ctx, m.c, m.threadView.Post.ID, !m.threadView.Post.Muted)
 	case "r":
 		if it, ok := m.thread.SelectedItem().(threadItem); ok {
 			m.startCompose(composeTarget{

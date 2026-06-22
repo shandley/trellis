@@ -103,12 +103,16 @@ func buildFeedItems(posts []core.Post, names map[string]string) []list.Item {
 		if p.ReplyCount == 1 {
 			replies = "1 reply"
 		}
+		body := firstLine(p.Body)
+		if p.Muted {
+			body = "(muted) " + body
+		}
 		label := fmt.Sprintf("%d  @%s  %s  %s  %s",
 			p.Seq,
 			handle(names, p.AuthorID),
 			relTime(p.LastActivity),
 			replies,
-			firstLine(p.Body),
+			body,
 		)
 		items = append(items, feedItem{post: p, label: label})
 	}

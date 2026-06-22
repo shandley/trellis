@@ -322,14 +322,38 @@ func (s *srv) handleFeed(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if posts == nil {
-		posts = []core.Post{}
+
+	// Apply the caller's mutes: mark muted posts and either sink them to the
+	// bottom (default feed) or drop them (unread view, where they shouldn't nag).
+	mutedIDs, err := s.store.MutedRootIDs(ctx, c.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	writeJSON(w, http.StatusOK, posts)
+	muted := make(map[string]bool, len(mutedIDs))
+	for _, id := range mutedIDs {
+		muted[id] = true
+	}
+	unreadView := q.Get("unread") == "1"
+	visible := make([]core.Post, 0, len(posts))
+	var sunk []core.Post
+	for _, p := range posts {
+		if muted[p.RootID] {
+			p.Muted = true
+			if unreadView {
+				continue
+			}
+			sunk = append(sunk, p)
+			continue
+		}
+		visible = append(visible, p)
+	}
+	writeJSON(w, http.StatusOK, append(visible, sunk...))
 }
 
 func (s *srv) handlePost(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	c := caller(r)
 	ref := r.PathValue("id")
 
 	full, ok := s.resolveRef(w, ctx, ref, "post")
@@ -342,6 +366,7 @@ func (s *srv) handlePost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not a post")
 		return
 	}
+	post.Muted, _ = s.store.IsMuted(ctx, c.ID, post.ID)
 
 	nodes, err := s.store.Subtree(ctx, post.ID)
 	if err != nil {

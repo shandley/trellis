@@ -84,6 +84,15 @@ Anywhere a node id is accepted (`GET /posts/{id}`, a reply's `parent_id`, and
   prefix" message. An all-digit address that doesn't resolve falls back to
   prefix matching.
 
+## Mute
+
+`POST /mute` ({root_id, muted}) mutes or unmutes a post for the calling
+participant. A muted post **sinks to the bottom of that participant's feed**
+(it stops resurfacing to the top on new activity) and is **dropped from the
+unread view** (`feed?unread=1`). It stays visible and is marked: every `Post`
+carries a `muted` boolean for the requesting caller (in both feed and
+`GET /posts/{id}`). Mutes are per-participant.
+
 ## Mentions
 
 A mention is the literal substring `@<handle>` in a node body. v0 keeps this

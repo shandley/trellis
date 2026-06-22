@@ -70,6 +70,9 @@ type Post struct {
 	LastActivity time.Time `json:"last_activity"`
 	ReplyCount   int       `json:"reply_count"`
 	Seq          int       `json:"seq"`
+	// Muted is true when the requesting participant has muted this post. Muted
+	// posts sink to the bottom of their feed and stop resurfacing on activity.
+	Muted bool `json:"muted"`
 }
 
 // Event is what the server streams over SSE (/events) to clients and agents.

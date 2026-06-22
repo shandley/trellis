@@ -653,3 +653,22 @@ func (s *sqliteStore) IsMuted(ctx context.Context, participantID, rootID string)
 	}
 	return muted == 1, nil
 }
+
+// MutedRootIDs returns the root ids the participant has muted.
+func (s *sqliteStore) MutedRootIDs(ctx context.Context, participantID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT root_id FROM mutes WHERE participant_id = ? AND muted = 1`, participantID)
+	if err != nil {
+		return nil, fmt.Errorf("muted root ids: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

@@ -388,6 +388,19 @@ func (f *fakeStore) IsMuted(_ context.Context, participantID, rootID string) (bo
 	return f.mutes[participantID+"|"+rootID], nil
 }
 
+func (f *fakeStore) MutedRootIDs(_ context.Context, participantID string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	prefix := participantID + "|"
+	for k, muted := range f.mutes {
+		if muted && len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			out = append(out, k[len(prefix):])
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) Close() error { return nil }
 
 var errNotFound = &storeError{"not found"}

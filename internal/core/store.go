@@ -58,6 +58,8 @@ type Store interface {
 	GetWatermark(ctx context.Context, participantID, channelID string) (time.Time, error) // zero time if none
 	SetMute(ctx context.Context, participantID, rootID string, muted bool) error
 	IsMuted(ctx context.Context, participantID, rootID string) (bool, error)
+	// MutedRootIDs returns the root ids the participant has muted.
+	MutedRootIDs(ctx context.Context, participantID string) ([]string, error)
 
 	Close() error
 }

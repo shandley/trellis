@@ -285,13 +285,17 @@ func feedCmd() *cobra.Command {
 			names := c.NameMap(cmd.Context())
 			now := time.Now()
 			for _, p := range posts {
+				body := firstLine(p.Body)
+				if p.Muted {
+					body = "(muted) " + body
+				}
 				fmt.Fprintf(out, "%-4d @%s  %s  %d %s  %s\n",
 					p.Seq,
 					authorName(names, p.AuthorID),
 					relTime(p.LastActivity, now),
 					p.ReplyCount,
 					plural(p.ReplyCount, "reply", "replies"),
-					firstLine(p.Body),
+					body,
 				)
 			}
 			return nil

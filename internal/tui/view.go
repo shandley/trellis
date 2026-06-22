@@ -17,11 +17,11 @@ func (m model) View() tea.View {
 	case modeFeed:
 		header = m.feedHeader()
 		body = m.feed.View()
-		footer = "up/down move · enter open · n new · c channel · tab switch · q quit"
+		footer = "enter open · n new · c channel · m mute · tab switch · q quit"
 	case modeThread:
 		header = m.threadHeader()
 		body = m.thread.View()
-		footer = "j/k move · r reply · esc back · q quit"
+		footer = "j/k move · r reply · m mute · esc back · q quit"
 	case modeCompose:
 		header = m.composeHeader()
 		body = m.compose.View()
