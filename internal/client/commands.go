@@ -167,6 +167,34 @@ func channelsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print raw JSON")
+	cmd.AddCommand(channelCreateCmd())
+	return cmd
+}
+
+func channelCreateCmd() *cobra.Command {
+	var dm bool
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a channel",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			kind := "channel"
+			if dm {
+				kind = "dm"
+			}
+			ch, err := c.CreateChannel(cmd.Context(), args[0], kind)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "created #%s [%s]\n", ch.Name, ch.Kind)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&dm, "dm", false, "create a DM-style channel instead of an open channel")
 	return cmd
 }
 
