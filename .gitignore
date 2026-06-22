@@ -1,0 +1,7 @@
+/trellis
+/trellis-*
+*.db
+*.db-shm
+*.db-wal
+/dist/
+.DS_Store
