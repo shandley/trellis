@@ -189,6 +189,31 @@ func TestChannelsDefault(t *testing.T) {
 	}
 }
 
+// TestCreateChannelFlow: "c" in feed mode opens compose targeting a new
+// channel; a channelCreatedMsg switches the current channel.
+func TestCreateChannelFlow(t *testing.T) {
+	m := newModel(nil)
+	m.channel = "general"
+	m = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m = step(t, m, keyLetter("c"))
+	if m.mode != modeCompose {
+		t.Fatalf("after c mode = %d, want compose", m.mode)
+	}
+	if !m.composeTarget.createChannel {
+		t.Fatal("c should target channel creation")
+	}
+	if !contains(m.View().Content, "New channel") {
+		t.Fatal("compose header should announce a new channel")
+	}
+
+	// Simulate the channel being created: the model switches to it.
+	m = step(t, m, channelCreatedMsg{name: "dev"})
+	if m.channel != "dev" {
+		t.Fatalf("channel = %q, want dev", m.channel)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

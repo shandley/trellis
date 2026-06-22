@@ -22,10 +22,11 @@ const (
 // composeTarget records what a compose is for so submit knows whether to call
 // CreatePost (a new post in a channel) or Reply (to a specific node).
 type composeTarget struct {
-	reply    bool      // false => new post in channel; true => reply to node
-	channel  string    // channel name (new post)
-	node     core.Node // node being replied to (reply)
-	nodeAddr string    // outline address of the node being replied to (for the header)
+	reply         bool      // true => reply to node
+	createChannel bool      // true => the text is a new channel name
+	channel       string    // channel name (new post)
+	node          core.Node // node being replied to (reply)
+	nodeAddr      string    // outline address of the node being replied to (for the header)
 }
 
 // model is the whole TUI. A single model keeps the code cohesive; the three

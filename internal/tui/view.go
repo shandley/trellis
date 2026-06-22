@@ -17,7 +17,7 @@ func (m model) View() tea.View {
 	case modeFeed:
 		header = m.feedHeader()
 		body = m.feed.View()
-		footer = "up/down move · enter open · n new · tab channel · q quit"
+		footer = "up/down move · enter open · n new · c channel · tab switch · q quit"
 	case modeThread:
 		header = m.threadHeader()
 		body = m.thread.View()
@@ -66,9 +66,13 @@ func (m model) threadHeader() string {
 }
 
 func (m model) composeHeader() string {
-	if m.composeTarget.reply {
+	switch {
+	case m.composeTarget.createChannel:
+		return "New channel — type a name (one word)"
+	case m.composeTarget.reply:
 		return fmt.Sprintf("Reply to %s: %s",
 			m.composeTarget.nodeAddr, firstLine(m.composeTarget.node.Body))
+	default:
+		return "New post in #" + m.composeTarget.channel
 	}
-	return "New post in #" + m.composeTarget.channel
 }

@@ -23,6 +23,7 @@ type feedLoadedMsg struct {
 }
 type threadLoadedMsg struct{ view api.PostView }
 type postedMsg struct{}
+type channelCreatedMsg struct{ name string }
 type errMsg struct{ err error }
 
 // sseStartedMsg carries the live event channel once the SSE stream opens.
@@ -97,6 +98,18 @@ func submitPost(ctx context.Context, c *client.Client, t composeTarget, body str
 			return errMsg{err}
 		}
 		return postedMsg{}
+	}
+}
+
+// submitChannel creates a new open channel and reports it back so the model can
+// switch to it.
+func submitChannel(ctx context.Context, c *client.Client, name string) tea.Cmd {
+	return func() tea.Msg {
+		ch, err := c.CreateChannel(ctxOrBackground(ctx), name, "channel")
+		if err != nil {
+			return errMsg{err}
+		}
+		return channelCreatedMsg{ch.Name}
 	}
 }
 

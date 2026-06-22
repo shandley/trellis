@@ -79,6 +79,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case channelCreatedMsg:
+		// Switch to the new channel and refresh the channel list (so tab
+		// includes it) and the (empty) feed.
+		m.channel = msg.name
+		m.status = "created #" + msg.name
+		return m, tea.Batch(loadChannels(m.ctx, m.c), loadFeed(m.ctx, m.c, msg.name))
+
 	case errMsg:
 		m.status = msg.err.Error()
 		return m, nil
@@ -152,6 +159,10 @@ func (m model) keyFeed(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// New post in the current channel.
 		m.startCompose(composeTarget{reply: false, channel: m.channel}, modeFeed)
 		return m, m.compose.Focus()
+	case "c":
+		// Create a new channel (the compose text is the channel name).
+		m.startCompose(composeTarget{createChannel: true}, modeFeed)
+		return m, m.compose.Focus()
 	case "tab":
 		m.nextChannel()
 		m.status = "loading #" + m.channel + "…"
@@ -196,12 +207,18 @@ func (m model) keyCompose(key string, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "ctrl+s":
 		body := strings.TrimSpace(m.compose.Value())
 		if body == "" {
-			m.status = "empty post ignored"
+			m.status = "nothing to submit"
 			return m, nil
 		}
 		target := m.composeTarget
 		m.compose.Blur()
 		m.mode = m.composeReturn
+		if target.createChannel {
+			// Channel names are a single word; take the first token.
+			name := strings.Fields(body)[0]
+			m.status = "creating #" + name + "…"
+			return m, submitChannel(m.ctx, m.c, name)
+		}
 		m.status = "posting…"
 		return m, submitPost(m.ctx, m.c, target, m.compose.Value())
 	}
