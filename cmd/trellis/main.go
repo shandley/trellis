@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/shandley/trellis/internal/client"
 	"github.com/shandley/trellis/internal/core"
@@ -18,6 +19,20 @@ import (
 	"github.com/shandley/trellis/internal/store"
 	"github.com/spf13/cobra"
 )
+
+// defaultDBPath returns a stable per-user location for the database
+// ($XDG_DATA_HOME/trellis/trellis.db, falling back to ~/.local/share).
+func defaultDBPath() string {
+	dir := os.Getenv("XDG_DATA_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "trellis.db"
+		}
+		dir = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(dir, "trellis", "trellis.db")
+}
 
 func main() {
 	root := &cobra.Command{
@@ -54,6 +69,9 @@ func serveCommand() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the Trellis conversation server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+				return fmt.Errorf("create data dir: %w", err)
+			}
 			st, err := store.Open(dbPath)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
@@ -78,7 +96,7 @@ func serveCommand() *cobra.Command {
 			return server.Serve(ctx, addr, st)
 		},
 	}
-	cmd.Flags().StringVar(&dbPath, "db", "trellis.db", "path to the SQLite database file")
+	cmd.Flags().StringVar(&dbPath, "db", defaultDBPath(), "path to the SQLite database file")
 	cmd.Flags().StringVar(&addr, "addr", ":8787", "address to listen on")
 	cmd.Flags().StringVar(&owner, "owner", "scott", "handle for the bootstrap owner participant")
 	return cmd

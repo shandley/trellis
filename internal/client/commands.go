@@ -256,11 +256,12 @@ func feedCmd() *cobra.Command {
 				fmt.Fprintln(out, "no posts")
 				return nil
 			}
+			names := c.NameMap(cmd.Context())
 			now := time.Now()
 			for _, p := range posts {
 				fmt.Fprintf(out, "%s  @%s  %s  %d %s  %s\n",
 					shortID(p.ID),
-					p.AuthorID,
+					authorName(names, p.AuthorID),
 					relTime(p.LastActivity, now),
 					p.ReplyCount,
 					plural(p.ReplyCount, "reply", "replies"),
@@ -298,9 +299,10 @@ func readCmd() *cobra.Command {
 			if asJSON {
 				return printJSON(pv)
 			}
+			names := c.NameMap(cmd.Context())
 			kids := childrenMap(pv.Nodes)
 			var b strings.Builder
-			renderTree(&b, kids, pv.Post.Node, all)
+			renderTree(&b, kids, pv.Post.Node, names, all)
 			fmt.Fprint(cmd.OutOrStdout(), b.String())
 			return nil
 		},
@@ -334,13 +336,14 @@ func watchCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			names := c.NameMap(ctx)
 			fmt.Fprintln(cmd.ErrOrStderr(), "watching… (Ctrl-C to stop)")
 			for ev := range events {
 				if ev.Node == nil {
 					continue
 				}
 				n := ev.Node
-				fmt.Fprintf(out, "%s  @%s: %s\n", shortID(n.ID), n.AuthorID, firstLine(n.Body))
+				fmt.Fprintf(out, "%s  @%s: %s\n", shortID(n.ID), authorName(names, n.AuthorID), firstLine(n.Body))
 			}
 			return ctx.Err()
 		},

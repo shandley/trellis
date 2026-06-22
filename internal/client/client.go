@@ -120,6 +120,27 @@ func (c *Client) CreateParticipant(ctx context.Context, handle, displayName, kin
 	return resp.Participant, resp.Token, err
 }
 
+// ListParticipants returns all participants (humans and agents).
+func (c *Client) ListParticipants(ctx context.Context) ([]core.Participant, error) {
+	var ps []core.Participant
+	err := c.do(ctx, http.MethodGet, "/participants", nil, nil, &ps)
+	return ps, err
+}
+
+// NameMap returns an author-id -> handle map for rendering. On error it returns
+// an empty map so callers degrade to short ids rather than failing.
+func (c *Client) NameMap(ctx context.Context) map[string]string {
+	ps, err := c.ListParticipants(ctx)
+	if err != nil {
+		return map[string]string{}
+	}
+	m := make(map[string]string, len(ps))
+	for _, p := range ps {
+		m[p.ID] = p.Handle
+	}
+	return m
+}
+
 // CreateChannel creates a channel or DM.
 func (c *Client) CreateChannel(ctx context.Context, name, kind string) (core.Channel, error) {
 	req := api.CreateChannelRequest{Name: name, Kind: kind}
