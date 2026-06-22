@@ -17,6 +17,7 @@ import (
 	"github.com/shandley/trellis/internal/mcp"
 	"github.com/shandley/trellis/internal/server"
 	"github.com/shandley/trellis/internal/store"
+	"github.com/shandley/trellis/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -47,6 +48,7 @@ func main() {
 
 	root.AddCommand(serveCommand())
 	root.AddCommand(mcp.Command())
+	root.AddCommand(tui.Command())
 	for _, c := range client.Commands() {
 		root.AddCommand(c)
 	}

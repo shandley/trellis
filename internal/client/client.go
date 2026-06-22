@@ -29,6 +29,11 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+// DefaultClient builds a Client from resolved configuration (TRELLIS_SERVER /
+// TRELLIS_TOKEN, then the config file). It is the entry point for other
+// packages such as the TUI. It errors when no token is configured.
+func DefaultClient() (*Client, error) { return newClient() }
+
 // NewClient returns a Client pointed at baseURL authenticating with token.
 // Trailing slashes on baseURL are trimmed so path joins stay clean.
 func NewClient(baseURL, token string) *Client {
