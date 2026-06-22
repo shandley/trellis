@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -322,6 +324,51 @@ func TestWatermarkAndMuteRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMigrateAddsSeq guards the upgrade path: an existing database whose posts
+// table predates the seq column must open cleanly, with seq added and
+// backfilled in creation order.
+func TestMigrateAddsSeq(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := []string{
+		`CREATE TABLE nodes (id TEXT PRIMARY KEY, channel_id TEXT, parent_id TEXT, root_id TEXT, author_id TEXT, body TEXT, created_at TEXT)`,
+		`CREATE TABLE posts (root_id TEXT PRIMARY KEY, channel_id TEXT, last_activity TEXT, reply_count INTEGER NOT NULL DEFAULT 0, created_at TEXT)`,
+		`INSERT INTO nodes VALUES ('n1','c1',NULL,'n1','a','first','2026-01-01T00:00:00Z')`,
+		`INSERT INTO posts VALUES ('n1','c1','2026-01-01T00:00:00Z',0,'2026-01-01T00:00:00Z')`,
+		`INSERT INTO nodes VALUES ('n2','c1',NULL,'n2','a','second','2026-01-02T00:00:00Z')`,
+		`INSERT INTO posts VALUES ('n2','c1','2026-01-02T00:00:00Z',0,'2026-01-02T00:00:00Z')`,
+	}
+	for _, s := range setup {
+		if _, err := raw.Exec(s); err != nil {
+			t.Fatalf("legacy setup: %v", err)
+		}
+	}
+	_ = raw.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy db: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	p1, err := st.PostByID(ctx, "n1")
+	if err != nil {
+		t.Fatalf("PostByID n1: %v", err)
+	}
+	p2, err := st.PostByID(ctx, "n2")
+	if err != nil {
+		t.Fatalf("PostByID n2: %v", err)
+	}
+	if p1.Seq != 1 || p2.Seq != 2 {
+		t.Fatalf("backfilled seq: n1=%d n2=%d, want 1,2", p1.Seq, p2.Seq)
+	}
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func mustParticipant(t *testing.T, st core.Store, handle string) *core.Participant {
@@ -363,36 +410,52 @@ func assertFeedOrder(t *testing.T, feed []core.Post, ids ...string) {
 	}
 }
 
-func TestResolveNodeID(t *testing.T) {
+func TestResolveRef(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
-	p, err := st.CreateParticipant(ctx, "scott", "scott", core.KindHuman)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.CreateChannel(ctx, "general", core.ChannelOpen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := st.CreateNode(ctx, ch.ID, nil, p.ID, "hello")
+	p := mustParticipant(t, st, "scott")
+	ch := mustChannel(t, st, "general")
+	post := mustPost(t, st, ch.ID, p.ID, "hello")
+	tick()
+	reply, err := st.CreateNode(ctx, "", &post.ID, p.ID, "a reply")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Full id resolves to itself.
-	if got, err := st.ResolveNodeID(ctx, n.ID); err != nil || got != n.ID {
+	pv, err := st.PostByID(ctx, post.ID)
+	if err != nil {
+		t.Fatalf("PostByID: %v", err)
+	}
+	if pv.Seq < 1 {
+		t.Fatalf("post should have a positive seq, got %d", pv.Seq)
+	}
+
+	// Full id and short prefix both resolve to the post.
+	if got, err := st.ResolveRef(ctx, post.ID); err != nil || got != post.ID {
 		t.Fatalf("full id: got %q err %v", got, err)
 	}
-	// A short prefix (as shown by `feed`) resolves to the full id.
-	if got, err := st.ResolveNodeID(ctx, n.ID[:8]); err != nil || got != n.ID {
+	if got, err := st.ResolveRef(ctx, post.ID[:8]); err != nil || got != post.ID {
 		t.Fatalf("prefix: got %q err %v", got, err)
 	}
-	// Unknown prefix -> ErrNotFound.
-	if _, err := st.ResolveNodeID(ctx, "ffffffffffffffffffffffffffffffff0"); !errors.Is(err, ErrNotFound) {
+	// Outline address: the bare post number resolves to the post.
+	if got, err := st.ResolveRef(ctx, strconv.Itoa(pv.Seq)); err != nil || got != post.ID {
+		t.Fatalf("address %d: got %q err %v", pv.Seq, got, err)
+	}
+	// Reply path: <seq>.1 resolves to the first reply.
+	addr := strconv.Itoa(pv.Seq) + ".1"
+	if got, err := st.ResolveRef(ctx, addr); err != nil || got != reply.ID {
+		t.Fatalf("address %s: got %q err %v", addr, got, err)
+	}
+	// Out-of-range reply index -> ErrNotFound.
+	if _, err := st.ResolveRef(ctx, strconv.Itoa(pv.Seq)+".9"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("out-of-range: want ErrNotFound, got %v", err)
+	}
+	// Unknown id prefix -> ErrNotFound.
+	if _, err := st.ResolveRef(ctx, "deadbeefdeadbeef"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown prefix: want ErrNotFound, got %v", err)
 	}
-	// Empty prefix -> ErrNotFound (never match-all).
-	if _, err := st.ResolveNodeID(ctx, ""); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("empty prefix: want ErrNotFound, got %v", err)
+	// Empty ref -> ErrNotFound.
+	if _, err := st.ResolveRef(ctx, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty: want ErrNotFound, got %v", err)
 	}
 }

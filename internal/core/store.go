@@ -43,11 +43,13 @@ type Store interface {
 	// root post's LastActivity. It returns the created node.
 	CreateNode(ctx context.Context, channelID string, parentID *string, authorID, body string) (*Node, error)
 	NodeByID(ctx context.Context, id string) (*Node, error)
-	// ResolveNodeID expands a (possibly short) id prefix to a full node id,
-	// git-style. Returns the full id when exactly one node matches, a not-found
-	// error when none match, and ErrAmbiguousID when more than one matches. A
-	// full id resolves to itself.
-	ResolveNodeID(ctx context.Context, prefix string) (string, error)
+	PostByID(ctx context.Context, id string) (*Post, error) // a root post with rollup + Seq; not-found error if id is not a post
+	// ResolveRef resolves a human reference to a node id. A reference is either
+	// an outline address (a post number "3", or a reply path "3.1.2" walking
+	// 1-based children by creation order) or a node-id prefix (git-style). It
+	// returns ErrAmbiguousID when a prefix matches more than one node, and a
+	// not-found error when nothing matches.
+	ResolveRef(ctx context.Context, ref string) (string, error)
 	Subtree(ctx context.Context, rootID string) ([]Node, error)                // all nodes with RootID == rootID, ordered by CreatedAt ascending
 	Feed(ctx context.Context, channelID string, opts FeedOpts) ([]Post, error) // root posts ordered by LastActivity descending
 

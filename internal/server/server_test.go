@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,8 @@ type fakeStore struct {
 	nodes        []core.Node
 	lastActivity map[string]time.Time // rootID -> last activity
 	replyCount   map[string]int       // rootID -> reply count
+	seq          map[string]int       // rootID -> global post number
+	seqCounter   int
 	watermarks   map[string]time.Time // participantID|channelID
 	mutes        map[string]bool      // participantID|rootID
 	clock        time.Time
@@ -35,6 +39,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		lastActivity: map[string]time.Time{},
 		replyCount:   map[string]int{},
+		seq:          map[string]int{},
 		watermarks:   map[string]time.Time{},
 		mutes:        map[string]bool{},
 		clock:        time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -174,12 +179,79 @@ func (f *fakeStore) CreateNode(_ context.Context, channelID string, parentID *st
 		n.RootID = n.ID
 		f.lastActivity[n.RootID] = n.CreatedAt
 		f.replyCount[n.RootID] = 0
+		f.seqCounter++
+		f.seq[n.RootID] = f.seqCounter
 	}
 	f.nodes = append(f.nodes, n)
 	return &n, nil
 }
 
-func (f *fakeStore) ResolveNodeID(_ context.Context, prefix string) (string, error) {
+func (f *fakeStore) ResolveRef(_ context.Context, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errNotFound
+	}
+	if isAddr(ref) {
+		if id, err := f.resolveAddress(ref); err == nil {
+			return id, nil
+		} else if err != errNotFound {
+			return "", err
+		}
+	}
+	return f.resolvePrefix(ref)
+}
+
+func isAddr(s string) bool {
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; (c < '0' || c > '9') && c != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *fakeStore) resolveAddress(ref string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	parts := strings.Split(ref, ".")
+	n, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", errNotFound
+	}
+	var cur string
+	for rid, sq := range f.seq {
+		if sq == n {
+			cur = rid
+			break
+		}
+	}
+	if cur == "" {
+		return "", errNotFound
+	}
+	for _, p := range parts[1:] {
+		idx, err := strconv.Atoi(p)
+		if err != nil || idx < 1 {
+			return "", errNotFound
+		}
+		var kids []core.Node
+		for i := range f.nodes {
+			if f.nodes[i].ParentID != nil && *f.nodes[i].ParentID == cur {
+				kids = append(kids, f.nodes[i])
+			}
+		}
+		sort.Slice(kids, func(i, j int) bool { return kids[i].CreatedAt.Before(kids[j].CreatedAt) })
+		if idx > len(kids) {
+			return "", errNotFound
+		}
+		cur = kids[idx-1].ID
+	}
+	return cur, nil
+}
+
+func (f *fakeStore) resolvePrefix(prefix string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var matches []string
@@ -196,6 +268,22 @@ func (f *fakeStore) ResolveNodeID(_ context.Context, prefix string) (string, err
 	default:
 		return "", core.ErrAmbiguousID
 	}
+}
+
+func (f *fakeStore) PostByID(_ context.Context, id string) (*core.Post, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := f.nodeByIDLocked(id)
+	if n == nil || !n.IsPost() {
+		return nil, errNotFound
+	}
+	cp := *n
+	return &core.Post{
+		Node:         cp,
+		LastActivity: f.lastActivity[id],
+		ReplyCount:   f.replyCount[id],
+		Seq:          f.seq[id],
+	}, nil
 }
 
 func (f *fakeStore) NodeByID(_ context.Context, id string) (*core.Node, error) {
@@ -246,6 +334,7 @@ func (f *fakeStore) Feed(_ context.Context, channelID string, opts core.FeedOpts
 			Node:         n,
 			LastActivity: la,
 			ReplyCount:   f.replyCount[n.RootID],
+			Seq:          f.seq[n.RootID],
 		})
 	}
 	// Order by LastActivity descending (simple insertion sort).

@@ -62,11 +62,14 @@ func (n Node) IsPost() bool { return n.ParentID == nil }
 
 // Post is a feed view: a root node plus the rollup metadata that drives
 // activity-ordered feeds. LastActivity is bumped to the CreatedAt of the
-// newest node anywhere in the post's subtree.
+// newest node anywhere in the post's subtree. Seq is the post's stable,
+// global, human-facing number (post 1, 2, ...); replies are addressed
+// relative to it as Seq.a.b.c (see the wire protocol).
 type Post struct {
 	Node
 	LastActivity time.Time `json:"last_activity"`
 	ReplyCount   int       `json:"reply_count"`
+	Seq          int       `json:"seq"`
 }
 
 // Event is what the server streams over SSE (/events) to clients and agents.

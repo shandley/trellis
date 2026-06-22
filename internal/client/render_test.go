@@ -52,7 +52,7 @@ func TestRenderTreeFolded(t *testing.T) {
 	kids := childrenMap(nodes)
 
 	var b strings.Builder
-	renderTree(&b, kids, root, map[string]string{"scott": "scott", "planner": "planner"}, false)
+	renderTree(&b, kids, root, map[string]string{"scott": "scott", "planner": "planner"}, nil, false)
 	out := b.String()
 
 	// Direct children shown.
@@ -77,7 +77,7 @@ func TestRenderTreeAll(t *testing.T) {
 	kids := childrenMap(nodes)
 
 	var b strings.Builder
-	renderTree(&b, kids, root, nil, true)
+	renderTree(&b, kids, root, nil, nil, true)
 	out := b.String()
 
 	if !strings.Contains(out, "grandchild") {

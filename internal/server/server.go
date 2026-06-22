@@ -122,11 +122,12 @@ func caller(r *http.Request) *core.Participant {
 	return p
 }
 
-// resolveNodeID expands a (possibly short) node-id prefix to a full id. On
-// failure it writes the appropriate HTTP error and returns ok=false. label
-// names the thing being resolved (e.g. "post", "parent") for error messages.
-func (s *srv) resolveNodeID(w http.ResponseWriter, ctx context.Context, prefix, label string) (string, bool) {
-	full, err := s.store.ResolveNodeID(ctx, prefix)
+// resolveRef resolves a human reference (an outline address like "3"/"3.1.2"
+// or a node-id prefix) to a full node id. On failure it writes the appropriate
+// HTTP error and returns ok=false. label names the thing being resolved (e.g.
+// "post", "parent") for error messages.
+func (s *srv) resolveRef(w http.ResponseWriter, ctx context.Context, ref, label string) (string, bool) {
+	full, err := s.store.ResolveRef(ctx, ref)
 	if err != nil {
 		if errors.Is(err, core.ErrAmbiguousID) {
 			writeErr(w, http.StatusBadRequest, "ambiguous "+label+" id prefix; use more characters")
@@ -255,8 +256,8 @@ func (s *srv) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if req.ParentID != nil {
-		// Reply: accept a short parent-id prefix, then inherit the parent's channel.
-		full, ok := s.resolveNodeID(w, ctx, *req.ParentID, "parent")
+		// Reply: accept an address or short id, then inherit the parent's channel.
+		full, ok := s.resolveRef(w, ctx, *req.ParentID, "parent")
 		if !ok {
 			return
 		}
@@ -329,23 +330,20 @@ func (s *srv) handleFeed(w http.ResponseWriter, r *http.Request) {
 
 func (s *srv) handlePost(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	id := r.PathValue("id")
+	ref := r.PathValue("id")
 
-	full, ok := s.resolveNodeID(w, ctx, id, "post")
+	full, ok := s.resolveRef(w, ctx, ref, "post")
 	if !ok {
 		return
 	}
-	root, err := s.store.NodeByID(ctx, full)
-	if err != nil || root == nil {
-		writeErr(w, http.StatusNotFound, "post not found")
-		return
-	}
-	if !root.IsPost() {
+	post, err := s.store.PostByID(ctx, full)
+	if err != nil || post == nil {
+		// Resolved to a node that isn't a root post (e.g. a reply id/address).
 		writeErr(w, http.StatusNotFound, "not a post")
 		return
 	}
 
-	nodes, err := s.store.Subtree(ctx, root.ID)
+	nodes, err := s.store.Subtree(ctx, post.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -354,26 +352,7 @@ func (s *srv) handlePost(w http.ResponseWriter, r *http.Request) {
 		nodes = []core.Node{}
 	}
 
-	// Derive rollup metadata from the subtree.
-	last := root.CreatedAt
-	for _, n := range nodes {
-		if n.CreatedAt.After(last) {
-			last = n.CreatedAt
-		}
-	}
-	replyCount := len(nodes) - 1
-	if replyCount < 0 {
-		replyCount = 0
-	}
-
-	view := api.PostView{
-		Post: core.Post{
-			Node:         *root,
-			LastActivity: last,
-			ReplyCount:   replyCount,
-		},
-		Nodes: nodes,
-	}
+	view := api.PostView{Post: *post, Nodes: nodes}
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -409,7 +388,7 @@ func (s *srv) handleMute(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "root_id is required")
 		return
 	}
-	full, ok := s.resolveNodeID(w, ctx, req.RootID, "post")
+	full, ok := s.resolveRef(w, ctx, req.RootID, "post")
 	if !ok {
 		return
 	}

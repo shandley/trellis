@@ -188,11 +188,10 @@ func postCmd() *cobra.Command {
 			if body == "" {
 				return fmt.Errorf("empty body")
 			}
-			n, err := c.CreatePost(cmd.Context(), channel, body)
-			if err != nil {
+			if _, err := c.CreatePost(cmd.Context(), channel, body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "posted %s\n", n.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "posted to #%s: %q\n", channel, firstLine(body))
 			return nil
 		},
 	}
@@ -217,11 +216,10 @@ func replyCmd() *cobra.Command {
 			if body == "" {
 				return fmt.Errorf("empty body")
 			}
-			n, err := c.Reply(cmd.Context(), parentID, body)
-			if err != nil {
+			if _, err := c.Reply(cmd.Context(), parentID, body); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "replied %s\n", n.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "replied to %s\n", parentID)
 			return nil
 		},
 	}
@@ -259,8 +257,8 @@ func feedCmd() *cobra.Command {
 			names := c.NameMap(cmd.Context())
 			now := time.Now()
 			for _, p := range posts {
-				fmt.Fprintf(out, "%s  @%s  %s  %d %s  %s\n",
-					shortID(p.ID),
+				fmt.Fprintf(out, "%-4d @%s  %s  %d %s  %s\n",
+					p.Seq,
 					authorName(names, p.AuthorID),
 					relTime(p.LastActivity, now),
 					p.ReplyCount,
@@ -329,8 +327,9 @@ func readCmd() *cobra.Command {
 			}
 			names := c.NameMap(cmd.Context())
 			kids := childrenMap(pv.Nodes)
+			addr := nodeAddresses(kids, pv.Post.Node, pv.Post.Seq)
 			var b strings.Builder
-			renderTree(&b, kids, pv.Post.Node, names, all)
+			renderTree(&b, kids, pv.Post.Node, names, addr, all)
 			fmt.Fprint(cmd.OutOrStdout(), b.String())
 			return nil
 		},

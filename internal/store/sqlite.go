@@ -7,6 +7,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,7 +46,30 @@ func Open(path string) (core.Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &sqliteStore{db: db}, nil
+}
+
+// migrate brings an existing database up to the current schema. It is
+// idempotent and safe to run on every Open.
+func migrate(db *sql.DB) error {
+	// posts.seq was added after the first release. Add it if missing (the error
+	// on an existing column is expected and ignored), then backfill any rows
+	// still at the default 0 with a stable creation-ordered rank.
+	_, _ = db.Exec(`ALTER TABLE posts ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`)
+	if _, err := db.Exec(
+		`UPDATE posts SET seq = (
+			SELECT COUNT(*) FROM posts p2 WHERE p2.created_at <= posts.created_at
+		) WHERE seq = 0`); err != nil {
+		return err
+	}
+	// Index lives here (not in schema.sql) because the column may have just
+	// been added above on an upgraded database.
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_posts_seq ON posts(seq)`)
+	return err
 }
 
 // Close closes the underlying database.
@@ -311,11 +336,16 @@ func (s *sqliteStore) CreateNode(ctx context.Context, channelID string, parentID
 	}
 
 	if parentID == nil {
-		// New post: create the rollup row.
+		// New post: assign the next global sequence number and create the rollup row.
+		var seq int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(seq), 0) + 1 FROM posts`).Scan(&seq); err != nil {
+			return nil, fmt.Errorf("create node: next seq: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO posts (root_id, channel_id, last_activity, reply_count, created_at)
-			 VALUES (?, ?, ?, 0, ?)`,
-			n.RootID, n.ChannelID, createdText, createdText); err != nil {
+			`INSERT INTO posts (root_id, channel_id, last_activity, reply_count, created_at, seq)
+			 VALUES (?, ?, ?, 0, ?, ?)`,
+			n.RootID, n.ChannelID, createdText, createdText, seq); err != nil {
 			return nil, fmt.Errorf("create node: insert post: %w", err)
 		}
 	} else {
@@ -344,13 +374,111 @@ func (s *sqliteStore) NodeByID(ctx context.Context, id string) (*core.Node, erro
 	return n, err
 }
 
-// ResolveNodeID expands a node-id prefix to a full id, git-style. It returns
-// ErrNotFound when no node matches and core.ErrAmbiguousID when more than one
-// does. A full id resolves to itself.
-func (s *sqliteStore) ResolveNodeID(ctx context.Context, prefix string) (string, error) {
-	if prefix == "" {
-		return "", fmt.Errorf("resolve node id: empty prefix: %w", ErrNotFound)
+// postCols selects a post's root-node fields plus its rollup, in the order
+// scanPost expects.
+const postCols = `n.id, n.channel_id, n.parent_id, n.root_id, n.author_id, n.body, n.created_at, p.last_activity, p.reply_count, p.seq`
+
+func scanPost(row interface{ Scan(...any) error }) (*core.Post, error) {
+	var post core.Post
+	var parent sql.NullString
+	var createdText, lastActivityText string
+	if err := row.Scan(
+		&post.ID, &post.ChannelID, &parent, &post.RootID, &post.AuthorID,
+		&post.Body, &createdText, &lastActivityText, &post.ReplyCount, &post.Seq); err != nil {
+		return nil, err
 	}
+	if parent.Valid {
+		p := parent.String
+		post.ParentID = &p
+	}
+	var err error
+	if post.CreatedAt, err = parseTime(createdText); err != nil {
+		return nil, err
+	}
+	if post.LastActivity, err = parseTime(lastActivityText); err != nil {
+		return nil, err
+	}
+	return &post, nil
+}
+
+// PostByID returns the post (root node + rollup + seq) for a root id, or a
+// not-found error if the id is not a post.
+func (s *sqliteStore) PostByID(ctx context.Context, id string) (*core.Post, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+postCols+` FROM posts p JOIN nodes n ON n.id = p.root_id WHERE p.root_id = ?`, id)
+	post, err := scanPost(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("post by id %q: %w", id, ErrNotFound)
+	}
+	return post, err
+}
+
+// addrRe matches an outline address: a post number, optionally followed by a
+// dotted reply path (e.g. "3", "3.1", "3.1.2").
+var addrRe = regexp.MustCompile(`^\d+(\.\d+)*$`)
+
+// ResolveRef resolves a human reference to a node id. A reference is either an
+// outline address (post number + dotted reply path) or a node-id prefix. An
+// address that fails to resolve falls back to prefix matching, so an all-digit
+// id prefix still works.
+func (s *sqliteStore) ResolveRef(ctx context.Context, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("resolve ref: empty: %w", ErrNotFound)
+	}
+	if addrRe.MatchString(ref) {
+		id, err := s.resolveAddress(ctx, ref)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+		// Not found as an address: fall through and try it as an id prefix.
+	}
+	return s.resolveNodeIDPrefix(ctx, ref)
+}
+
+// resolveAddress walks an outline address to a node id: the leading number
+// selects the post by its global seq, and each subsequent index selects the
+// 1-based child (in creation order) of the current node.
+func (s *sqliteStore) resolveAddress(ctx context.Context, ref string) (string, error) {
+	parts := strings.Split(ref, ".")
+	seq, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("resolve address %q: %w", ref, ErrNotFound)
+	}
+	var cur string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT root_id FROM posts WHERE seq = ?`, seq).Scan(&cur); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("resolve address %q: post %d: %w", ref, seq, ErrNotFound)
+		}
+		return "", err
+	}
+	for _, p := range parts[1:] {
+		idx, err := strconv.Atoi(p)
+		if err != nil || idx < 1 {
+			return "", fmt.Errorf("resolve address %q: %w", ref, ErrNotFound)
+		}
+		var child string
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT id FROM nodes WHERE parent_id = ? ORDER BY created_at ASC LIMIT 1 OFFSET ?`,
+			cur, idx-1).Scan(&child); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", fmt.Errorf("resolve address %q: %w", ref, ErrNotFound)
+			}
+			return "", err
+		}
+		cur = child
+	}
+	return cur, nil
+}
+
+// resolveNodeIDPrefix expands a node-id prefix to a full id, git-style. It
+// returns ErrNotFound when no node matches and core.ErrAmbiguousID when more
+// than one does. A full id resolves to itself.
+func (s *sqliteStore) resolveNodeIDPrefix(ctx context.Context, prefix string) (string, error) {
 	// LIKE with an escaped prefix; ids are hex so no wildcard chars occur, but
 	// guard anyway. Limit 2 is enough to detect ambiguity.
 	rows, err := s.db.QueryContext(ctx,
@@ -419,8 +547,7 @@ func (s *sqliteStore) Feed(ctx context.Context, channelID string, opts core.Feed
 	// Build the query incrementally. We join nodes to recover the root node's
 	// content fields alongside the posts rollup.
 	query := `
-		SELECT n.id, n.channel_id, n.parent_id, n.root_id, n.author_id, n.body, n.created_at,
-		       p.last_activity, p.reply_count
+		SELECT ` + postCols + `
 		FROM posts p
 		JOIN nodes n ON n.id = p.root_id
 		WHERE p.channel_id = ?`
@@ -459,25 +586,11 @@ func (s *sqliteStore) Feed(ctx context.Context, channelID string, opts core.Feed
 
 	var out []core.Post
 	for rows.Next() {
-		var post core.Post
-		var parent sql.NullString
-		var createdText, lastActivityText string
-		if err := rows.Scan(
-			&post.ID, &post.ChannelID, &parent, &post.RootID, &post.AuthorID,
-			&post.Body, &createdText, &lastActivityText, &post.ReplyCount); err != nil {
+		post, err := scanPost(rows)
+		if err != nil {
 			return nil, fmt.Errorf("feed scan: %w", err)
 		}
-		if parent.Valid {
-			p := parent.String
-			post.ParentID = &p
-		}
-		if post.CreatedAt, err = parseTime(createdText); err != nil {
-			return nil, err
-		}
-		if post.LastActivity, err = parseTime(lastActivityText); err != nil {
-			return nil, err
-		}
-		out = append(out, post)
+		out = append(out, *post)
 	}
 	return out, rows.Err()
 }

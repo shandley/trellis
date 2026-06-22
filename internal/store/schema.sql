@@ -42,9 +42,12 @@ CREATE TABLE IF NOT EXISTS posts (
     channel_id    TEXT NOT NULL REFERENCES channels(id),
     last_activity TEXT NOT NULL,
     reply_count   INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL,
+    seq           INTEGER NOT NULL DEFAULT 0  -- stable global human-facing post number (1, 2, ...)
 );
 CREATE INDEX IF NOT EXISTS idx_posts_feed ON posts(channel_id, last_activity DESC);
+-- Note: the index on posts(seq) is created in migrate(), after the seq column
+-- is guaranteed to exist (it was added to the schema after the first release).
 
 -- Read-state watermark: one row per (participant, channel).
 CREATE TABLE IF NOT EXISTS watermarks (

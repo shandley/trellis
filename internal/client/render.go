@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,43 +96,69 @@ func authorName(names map[string]string, id string) string {
 	return shortID(id)
 }
 
+// nodeAddresses assigns each node an outline address: the root post is "<seq>"
+// and each child is its parent's address plus "." plus its 1-based position
+// among siblings (in creation order). Returns a map of node id -> address.
+func nodeAddresses(kids map[string][]core.Node, root core.Node, seq int) map[string]string {
+	addr := map[string]string{root.ID: strconv.Itoa(seq)}
+	var walk func(id, base string)
+	walk = func(id, base string) {
+		for i, child := range kids[id] {
+			a := base + "." + strconv.Itoa(i+1)
+			addr[child.ID] = a
+			walk(child.ID, a)
+		}
+	}
+	walk(root.ID, strconv.Itoa(seq))
+	return addr
+}
+
+// nodeRef returns a node's outline address, falling back to a short id when no
+// address is known (e.g. addr is nil).
+func nodeRef(addr map[string]string, id string) string {
+	if a, ok := addr[id]; ok && a != "" {
+		return a
+	}
+	return shortID(id)
+}
+
 // renderTree renders the subtree rooted at root into b. names resolves author
-// ids to handles (may be nil).
+// ids to handles, and addr maps node ids to outline addresses (both may be nil).
 //
 // Folding (org-mode style): when all is false, only the root and its DIRECT
 // children are expanded. Any child that itself has descendants is shown with a
 // placeholder line pointing at how to expand it. When all is true the entire
 // tree is expanded, indented by depth.
-func renderTree(b *strings.Builder, kids map[string][]core.Node, root core.Node, names map[string]string, all bool) {
-	writeNode(b, root, names, 0)
+func renderTree(b *strings.Builder, kids map[string][]core.Node, root core.Node, names, addr map[string]string, all bool) {
+	writeNode(b, root, names, addr, 0)
 	if all {
-		writeChildrenRecursive(b, kids, root.ID, names, 1)
+		writeChildrenRecursive(b, kids, root.ID, names, addr, 1)
 		return
 	}
 	// Folded: only direct children, with placeholders for deeper subtrees.
 	for _, child := range kids[root.ID] {
-		writeNode(b, child, names, 1)
+		writeNode(b, child, names, addr, 1)
 		if n := countSubtree(kids, child.ID); n > 0 {
 			indent := strings.Repeat("  ", 2)
 			fmt.Fprintf(b, "%s[%d %s ▸ trellis read %s --all]\n",
-				indent, n, plural(n, "reply", "replies"), shortID(child.ID))
+				indent, n, plural(n, "reply", "replies"), nodeRef(addr, child.ID))
 		}
 	}
 }
 
 // writeChildrenRecursive expands every descendant of id at the given depth.
-func writeChildrenRecursive(b *strings.Builder, kids map[string][]core.Node, id string, names map[string]string, depth int) {
+func writeChildrenRecursive(b *strings.Builder, kids map[string][]core.Node, id string, names, addr map[string]string, depth int) {
 	for _, child := range kids[id] {
-		writeNode(b, child, names, depth)
-		writeChildrenRecursive(b, kids, child.ID, names, depth+1)
+		writeNode(b, child, names, addr, depth)
+		writeChildrenRecursive(b, kids, child.ID, names, addr, depth+1)
 	}
 }
 
-// writeNode writes a single tree line: indentation, short id, author, and the
-// first line of the body.
-func writeNode(b *strings.Builder, n core.Node, names map[string]string, depth int) {
+// writeNode writes a single tree line: indentation, outline address, author,
+// and the first line of the body.
+func writeNode(b *strings.Builder, n core.Node, names, addr map[string]string, depth int) {
 	indent := strings.Repeat("  ", depth)
-	fmt.Fprintf(b, "%s%s  @%s: %s\n", indent, shortID(n.ID), authorName(names, n.AuthorID), firstLine(n.Body))
+	fmt.Fprintf(b, "%s%s  @%s: %s\n", indent, nodeRef(addr, n.ID), authorName(names, n.AuthorID), firstLine(n.Body))
 }
 
 func plural(n int, one, many string) string {
